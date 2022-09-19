@@ -1,0 +1,78 @@
+version: '3.9'
+services:
+  metabase-mysql:
+    image: metabase/metabase-enterprise:v1.44.2
+    container_name: metabase-mysql
+    hostname: metabase-mysql
+    volumes: 
+    - /dev/urandom:/dev/random:ro
+    ports:
+      - 3000:3000
+    environment:
+      MB_DB_DBNAME: "metabase"
+      MB_DB_PORT: "3306"
+      MB_DB_USER: "metabase"
+      MB_DB_PASS: "mysecretpassword"
+      MB_DB_HOST: "mysql"
+      MB_DB_TYPE: "mysql"
+    networks: 
+      - metanet1-mysql
+  mysql-app-db:
+    image: mysql:8.0.30
+    container_name: mysql
+    hostname: mysql
+    ports: 
+      - 3306:3306
+    environment:
+      - "MYSQL_ROOT_PASSWORD=mysecretpassword"
+      - "MYSQL_USER=metabase"
+      - "MYSQL_PASSWORD=mysecretpassword"
+      - "MYSQL_DATABASE=metabase"
+    volumes:
+      - $PWD/mysql-app-db:/var/lib/mysql
+    command: ['--default-authentication-plugin=mysql_native_password', '--mysqlx=0']
+    networks: 
+      - metanet1-mysql
+  setup:
+    image: bash:5.1.16
+    container_name: setup
+    volumes:
+      - $PWD/setup:/tmp
+    networks:
+      - metanet1-mysql
+    command: sh /tmp/metabase-setup.sh metabase-mysql:3000
+    cpus: 1
+    mem_limit: 32mb
+  openssh-server-choke:
+    image: lscr.io/linuxserver/openssh-server:version-8.8_p1-r1
+    container_name: ssh-choke
+    hostname: ssh-choke
+    environment:
+      - PUBLIC_KEY_FILE=/root/.ssh/id_ed25519.pub
+      - USER_NAME=metabase
+    volumes:
+      - $PWD/ssh/sshd_config:/config/ssh_host_keys/sshd_config
+      - $PWD/ssh/keys/:/root/.ssh/
+    networks: 
+      - metanet1-mysql
+    ports:
+      - 2222:2222
+  mariadb-data:
+    build: mariadb-data/.
+    container_name: mariadb-data
+    hostname: mariadb-data
+    ports:
+      - 3307:3306
+    networks: 
+      - metanet1-mysql
+  mysql-data:
+    image: metabase/qa-databases:mysql-sample-8
+    container_name: mysql-data
+    hostname: mysql-data
+    ports:
+      - 3308:3306
+    networks: 
+      - metanet1-mysql
+networks: 
+  metanet1-mysql:
+    driver: bridge
