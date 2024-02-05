@@ -1,7 +1,7 @@
 version: '3.9'
 services:
   metabase-mysql:
-    image: metabase/metabase-enterprise:v1.44.2
+    image: metabase/metabase-enterprise:v1.48.4
     container_name: metabase-mysql
     hostname: metabase-mysql
     volumes: 
@@ -9,18 +9,61 @@ services:
     ports:
       - 3000:3000
     environment:
-      MB_DB_DBNAME: "metabase"
-      MB_DB_PORT: "3306"
-      MB_DB_USER: "metabase"
-      MB_DB_PASS: "mysecretpassword"
-      MB_DB_HOST: "mysql"
-      MB_DB_TYPE: "mysql"
+      MB_DB_DBNAME: metabase
+      MB_DB_PORT: 3306
+      MB_DB_USER: metabase
+      MB_DB_PASS: mysecretpassword
+      MB_DB_HOST: mysql-app-db
+      MB_DB_TYPE: mysql
     networks: 
       - metanet1-mysql
+    healthcheck:
+      test: curl --fail -X GET -I http://localhost:3000/api/health || exit 1
+      interval: 15s
+      timeout: 30s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 3072M
+        reservations:
+          cpus: '1'
+          memory: 1536M
+  metabase-mariadb:
+    image: metabase/metabase-enterprise:v1.48.4
+    container_name: metabase-mariadb
+    hostname: metabase-mariadb
+    volumes: 
+    - /dev/urandom:/dev/random:ro
+    ports:
+      - 3001:3000
+    environment:
+      MB_DB_DBNAME: metabase
+      MB_DB_PORT: 3306
+      MB_DB_USER: metabase
+      MB_DB_PASS: mysecretpassword
+      MB_DB_HOST: mariadb-app-db
+      MB_DB_TYPE: mysql
+    networks: 
+      - metanet1-mysql
+    healthcheck:
+      test: curl --fail -X GET -I http://localhost:3000/api/health || exit 1
+      interval: 15s
+      timeout: 30s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 3072M
+        reservations:
+          cpus: '1'
+          memory: 1536M
   mysql-app-db:
     image: mysql:8.0.30
-    container_name: mysql
-    hostname: mysql
+    container_name: mysql-app-db
+    hostname: mysql-app-db
     ports: 
       - 3306:3306
     environment:
@@ -29,22 +72,71 @@ services:
       - "MYSQL_PASSWORD=mysecretpassword"
       - "MYSQL_DATABASE=metabase"
     volumes:
-      - $PWD/mysql-app-db:/var/lib/mysql
+    - $PWD/mysql-app-db-config/my.cnf:/etc/mysql/conf.d/my.cnf:ro
     command: ['--default-authentication-plugin=mysql_native_password', '--mysqlx=0']
     networks: 
       - metanet1-mysql
-  setup:
-    image: bash:5.1.16
-    container_name: setup
+  mariadb-app-db:
+    image: mariadb:11.2.2
+    container_name: mariadb-app-db
+    hostname: mariadb-app-db
+    ports:
+      - 3307:3306
+    environment:
+      - "MYSQL_ROOT_PASSWORD=mysecretpassword"
+      - "MYSQL_USER=metabase"
+      - "MYSQL_PASSWORD=mysecretpassword"
+      - "MYSQL_DATABASE=metabase"
     volumes:
-      - $PWD/setup:/tmp
+      - $PWD/mariadb-config/my.cnf:/etc/mariadb/conf.d/my.cnf:ro
+    networks: 
+      - metanet1-mysql
+  setup-mysql:
+    build: setup/.
+    container_name: setup-mysql
+    volumes:
+      - $PWD/setup/setup.py:/app/setup.py
     networks:
       - metanet1-mysql
-    command: sh /tmp/metabase-setup.sh metabase-mysql:3000
-    cpus: 1
-    mem_limit: 32mb
+    depends_on:
+      metabase-mysql:
+        condition: service_healthy
+    environment:
+      host: http://metabase-mysql
+      port: 3000
+    command: python /app/setup.py
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 64M
+        reservations:
+          cpus: '0.5'
+          memory: 32M
+  setup-mariadb:
+    build: setup/.
+    container_name: setup-mariadb
+    volumes:
+      - $PWD/setup/setup.py:/app/setup.py
+    networks:
+      - metanet1-mysql
+    depends_on:
+      metabase-mariadb:
+        condition: service_healthy
+    environment:
+      host: http://metabase-mariadb
+      port: 3000
+    command: python /app/setup.py
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 64M
+        reservations:
+          cpus: '0.5'
+          memory: 32M
   openssh-server-choke:
-    image: lscr.io/linuxserver/openssh-server:version-8.8_p1-r1
+    image: lscr.io/linuxserver/openssh-server:version-9.3_p2-r0
     container_name: ssh-choke
     hostname: ssh-choke
     environment:
@@ -57,22 +149,27 @@ services:
       - metanet1-mysql
     ports:
       - 2222:2222
+    command: -p 22
   mariadb-data:
     build: mariadb-data/.
     container_name: mariadb-data
     hostname: mariadb-data
     ports:
-      - 3307:3306
+      - 3308:3306
     networks: 
       - metanet1-mysql
+    volumes:
+      - $PWD/mariadb-config/my.cnf:/etc/mariadb/conf.d/my.cnf:ro
   mysql-data:
     image: metabase/qa-databases:mysql-sample-8
     container_name: mysql-data
     hostname: mysql-data
     ports:
-      - 3308:3306
+      - 3309:3306
     networks: 
       - metanet1-mysql
+    volumes:
+      - $PWD/mysql-config/my.cnf:/etc/mysql/conf.d/my.cnf:ro
 networks: 
   metanet1-mysql:
     driver: bridge
